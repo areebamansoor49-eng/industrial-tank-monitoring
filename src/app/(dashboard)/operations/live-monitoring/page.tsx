@@ -1,6 +1,8 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import IndustrialTankVisualization from "@/components/workspaces/IndustrialTankVisualization";
 
 type TankStatus = "Normal" | "Warning" | "Critical";
 
@@ -12,17 +14,23 @@ type Sensor = {
 
 type Tank = {
   id: string;
+  tankCode: string;
   name: string;
   siteId: string;
+  siteName: string;
   product: string;
   capacity: number;
+  capacityUnit: string;
   level: number;
   temperature: number;
-  pressure: number;
+  pressure: number | null;
   flow: number;
+  flowUnit: string;
   status: TankStatus;
   gateway: string;
+  gatewayConfigured: boolean;
   sensors: Sensor[];
+  mode: "SIMULATED";
 };
 
 type Site = {
@@ -33,743 +41,728 @@ type Site = {
   tankIds: string[];
 };
 
-const sites: Site[] = [
-  {
-    id: "SITE-NP",
-    name: "North Processing Site",
-    location: "Primary Processing Facility",
-    status: "Operational",
-    tankIds: ["T-101", "T-102"],
-  },
-  {
-    id: "SITE-SD",
-    name: "South Distribution Site",
-    location: "Distribution Facility",
-    status: "Operational",
-    tankIds: ["T-201"],
-  },
-];
-
-const initialTanks: Tank[] = [
-  {
-    id: "T-101",
-    name: "Storage Tank 101",
-    siteId: "SITE-NP",
-    product: "Diesel",
-    capacity: 50000,
-    level: 72.4,
-    temperature: 28.6,
-    pressure: 1.42,
-    flow: 184,
-    status: "Normal",
-    gateway: "GW-NP-001",
-    sensors: [
-      { id: "LT-101", type: "Level Sensor", unit: "%" },
-      { id: "TT-101", type: "Temperature Sensor", unit: "°C" },
-      { id: "PT-101", type: "Pressure Sensor", unit: "bar" },
-      { id: "FT-101", type: "Flow Sensor", unit: "L/min" },
-    ],
-  },
-  {
-    id: "T-102",
-    name: "Storage Tank 102",
-    siteId: "SITE-NP",
-    product: "Petrol",
-    capacity: 40000,
-    level: 58.8,
-    temperature: 29.1,
-    pressure: 1.36,
-    flow: 142,
-    status: "Normal",
-    gateway: "GW-NP-001",
-    sensors: [
-      { id: "LT-102", type: "Level Sensor", unit: "%" },
-      { id: "TT-102", type: "Temperature Sensor", unit: "°C" },
-      { id: "PT-102", type: "Pressure Sensor", unit: "bar" },
-      { id: "FT-102", type: "Flow Sensor", unit: "L/min" },
-    ],
-  },
-  {
-    id: "T-201",
-    name: "Storage Tank 201",
-    siteId: "SITE-SD",
-    product: "Diesel",
-    capacity: 60000,
-    level: 81.2,
-    temperature: 27.9,
-    pressure: 1.51,
-    flow: 226,
-    status: "Warning",
-    gateway: "GW-SD-001",
-    sensors: [
-      { id: "LT-201", type: "Level Sensor", unit: "%" },
-      { id: "TT-201", type: "Temperature Sensor", unit: "°C" },
-      { id: "PT-201", type: "Pressure Sensor", unit: "bar" },
-      { id: "FT-201", type: "Flow Sensor", unit: "L/min" },
-    ],
-  },
-];
-
-function formatNumber(value: number) {
+function formatNumber(value: number, digits = 0) {
   return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
   }).format(value);
-}
-
-function formatDecimal(value: number, digits = 1) {
-  return value.toFixed(digits);
 }
 
 function statusClasses(status: TankStatus) {
   if (status === "Critical") {
-    return "border-red-200 bg-red-50 text-red-800";
+    return "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300";
   }
 
   if (status === "Warning") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
+    return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300";
   }
 
-  return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  return "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300";
 }
 
-function sensorValue(
-  sensorType: string,
-  tank: Tank,
-) {
-  if (sensorType === "Level Sensor") {
-    return `${formatDecimal(tank.level)}%`;
+function sensorValue(sensor: Sensor, tank: Tank) {
+  if (sensor.type === "Level Sensor") {
+    return `${formatNumber(tank.level, 1)} ${sensor.unit}`;
   }
 
-  if (sensorType === "Temperature Sensor") {
-    return `${formatDecimal(tank.temperature)} °C`;
+  if (sensor.type === "Temperature Sensor") {
+    return `${formatNumber(tank.temperature, 1)} ${sensor.unit}`;
   }
 
-  if (sensorType === "Pressure Sensor") {
-    return `${formatDecimal(tank.pressure, 2)} bar`;
+  if (sensor.type === "Pressure Sensor") {
+    return tank.pressure == null
+      ? "Not configured"
+      : `${formatNumber(tank.pressure, 2)} ${sensor.unit}`;
   }
 
-  return `${formatNumber(tank.flow)} L/min`;
+  return `${formatNumber(tank.flow, 1)} ${tank.flowUnit}`;
+}
+
+function formatTimestamp(value: string | null) {
+  if (!value) return "Waiting for telemetry";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Timestamp unavailable";
+
+  return new Intl.DateTimeFormat("en-PK", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
 }
 
 export default function LiveMonitoringPage() {
-  const [tanks, setTanks] = useState(initialTanks);
-  const [selectedSiteId, setSelectedSiteId] = useState("SITE-NP");
-  const [selectedTankId, setSelectedTankId] = useState("T-101");
+  const [tanks, setTanks] = useState<Tank[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [selectedSiteId, setSelectedSiteId] = useState("");
+  const [selectedTankId, setSelectedTankId] = useState("");
   const [isLive, setIsLive] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [simulationError, setSimulationError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   const selectedSite = useMemo(
-    () => sites.find((site) => site.id === selectedSiteId) ?? sites[0],
-    [selectedSiteId],
+    () => sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null,
+    [sites, selectedSiteId],
   );
 
   const siteTanks = useMemo(
-    () => tanks.filter((tank) => tank.siteId === selectedSiteId),
-    [tanks, selectedSiteId],
+    () =>
+      selectedSite
+        ? tanks.filter((tank) => tank.siteId === selectedSite.id)
+        : [],
+    [tanks, selectedSite],
   );
 
   const selectedTank = useMemo(
     () =>
       siteTanks.find((tank) => tank.id === selectedTankId) ??
       siteTanks[0] ??
-      tanks[0],
-    [selectedTankId, siteTanks, tanks],
+      null,
+    [siteTanks, selectedTankId],
   );
+
+  const currentVolume = selectedTank
+    ? (selectedTank.capacity * selectedTank.level) / 100
+    : 0;
+
+  const availableVolume = selectedTank
+    ? Math.max(0, selectedTank.capacity - currentVolume)
+    : 0;
 
   useEffect(() => {
     if (!isLive) return;
 
-    const interval = window.setInterval(() => {
-      setTanks((current) =>
-        current.map((tank) => {
-          const levelChange = (Math.random() - 0.5) * 0.16;
-          const temperatureChange = (Math.random() - 0.5) * 0.08;
-          const pressureChange = (Math.random() - 0.5) * 0.02;
-          const flowChange = (Math.random() - 0.5) * 8;
+    let cancelled = false;
 
-          const level = Math.min(
-            98,
-            Math.max(5, tank.level + levelChange),
+    const refreshTelemetry = async () => {
+      try {
+        const response = await fetch("/api/telemetry/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        });
+
+        const responseText = await response.text();
+
+        let payload: any = null;
+
+        try {
+          payload = responseText ? JSON.parse(responseText) : null;
+        } catch {
+          throw new Error(
+            `Simulator returned an invalid response (${response.status}). ${
+              responseText
+                ? responseText.slice(0, 200)
+                : "Response body was empty."
+            }`,
           );
+        }
 
-          const temperature = Math.max(
-            18,
-            tank.temperature + temperatureChange,
+        if (!response.ok) {
+          throw new Error(
+            typeof payload?.error === "string"
+              ? payload.error
+              : "Unable to retrieve telemetry.",
           );
+        }
 
-          const pressure = Math.max(
-            0.5,
-            tank.pressure + pressureChange,
-          );
+        if (
+          cancelled ||
+          payload.mode !== "SIMULATED" ||
+          !Array.isArray(payload.tanks) ||
+          !Array.isArray(payload.sites)
+        ) {
+          return;
+        }
 
-          const flow = Math.max(
-            0,
-            tank.flow + flowChange,
-          );
+        const nextTanks = payload.tanks as Tank[];
+        const nextSites = payload.sites as Site[];
 
-          let status: TankStatus = "Normal";
+        // An empty database inventory must clear all previous data.
+        if (nextTanks.length === 0) {
+          setTanks([]);
+          setSites(nextSites);
+          setSelectedTankId("");
+          setSelectedSiteId(nextSites[0]?.id ?? "");
+          setLastUpdated(payload.recorded_at ?? null);
+          setSimulationError("");
+          return;
+        }
 
-          if (level >= 90 || level <= 10) {
-            status = "Critical";
-          } else if (level >= 82 || level <= 18) {
-            status = "Warning";
+        setTanks(nextTanks);
+        setSites(nextSites);
+        setLastUpdated(payload.recorded_at ?? null);
+        setSimulationError("");
+
+        setSelectedSiteId((current) => {
+          if (nextSites.some((site) => site.id === current)) {
+            return current;
           }
 
-          return {
-            ...tank,
-            level,
-            temperature,
-            pressure,
-            flow,
-            status,
-          };
-        }),
-      );
-    }, 3000);
+          return nextSites[0]?.id ?? "";
+        });
 
-    return () => window.clearInterval(interval);
+        setSelectedTankId((current) => {
+          if (nextTanks.some((tank) => tank.id === current)) {
+            return current;
+          }
+
+          return nextTanks[0]?.id ?? "";
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setSimulationError(
+            error instanceof Error
+              ? error.message
+              : "Unable to refresh simulated telemetry.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void refreshTelemetry();
+
+    const interval = window.setInterval(() => {
+      void refreshTelemetry();
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [isLive]);
 
-  const currentVolume =
-    (selectedTank.capacity * selectedTank.level) / 100;
+  const handleSiteChange = (siteId: string) => {
+    setSelectedSiteId(siteId);
 
-  const handleSiteChange = (
-    event: React.ChangeEvent<HTMLSelectElement>,
-  ) => {
-    const nextSiteId = event.target.value;
-    const nextSite = sites.find((site) => site.id === nextSiteId);
+    const firstTank = tanks.find((tank) => tank.siteId === siteId);
 
-    setSelectedSiteId(nextSiteId);
-
-    if (nextSite?.tankIds[0]) {
-      setSelectedTankId(nextSite.tankIds[0]);
-    }
+    setSelectedTankId(firstTank?.id ?? "");
   };
 
+  const cardClass =
+    "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900";
+
+  const mutedText = "text-slate-500 dark:text-slate-400";
+  const headingText = "text-slate-900 dark:text-slate-100";
+
   return (
-    <main className="min-h-screen bg-[#edf4f0] px-4 py-5 text-[#172033] sm:px-5 sm:py-6 lg:px-8">
-      <div className="mx-auto max-w-[1600px]">
+    <main className="min-h-full bg-slate-50 px-3 py-5 dark:bg-slate-950 sm:px-5 lg:px-8">
+      <div className="mx-auto max-w-[1800px]">
 
         {/* HEADER */}
-        <div className="flex flex-col gap-5 border-b border-[#cbd8d2] pb-6 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#172923] text-white shadow-sm">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  className="h-5 w-5"
-                >
-                  <path d="M12 3v18" />
-                  <path d="M7 6h10" />
-                  <path d="M6 10h12" />
-                  <path d="M7 14h10" />
-                  <path d="M8 18h8" />
-                </svg>
+        <header className="rounded-2xl border border-slate-800 bg-[#10251f] p-6 shadow-xl sm:p-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-400/15 text-emerald-300">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    className="h-6 w-6"
+                  >
+                    <path d="M12 3v18M7 6h10M6 10h12M7 14h10M8 18h8" />
+                  </svg>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300/80">
+                    Operations
+                  </p>
+                  <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                    Live Monitoring
+                  </h1>
+                </div>
               </div>
 
-              <div>
-                <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-[#53675f]">
-                  Operations
-                </p>
-
-                <h1 className="mt-0.5 text-[27px] font-bold tracking-[-0.02em] text-[#172033] sm:text-[29px]">
-                  Live Monitoring
-                </h1>
-              </div>
+              <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-300">
+                Monitor registered storage assets, simulated telemetry,
+                measurement points and gateway configuration across your
+                organization.
+              </p>
             </div>
 
-            <p className="mt-3 max-w-3xl text-[14px] font-medium leading-6 text-[#4e5d69] sm:text-[15px]">
-              Real-time tank telemetry, sensor health, gateway connectivity,
-              and operational status for the selected site.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 rounded-lg border border-[#cbd8d2] bg-white px-4 py-2.5 shadow-sm">
-              <span className="relative flex h-2.5 w-2.5">
-                {isLive && (
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                )}
-
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/5">
                 <span
-                  className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
-                    isLive ? "bg-emerald-600" : "bg-slate-500"
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    isLive ? "animate-pulse bg-emerald-400" : "bg-slate-500"
                   }`}
                 />
-              </span>
-
-              <span className="text-[13px] font-bold text-[#263542]">
-                {isLive ? "Simulation Live" : "Monitoring Paused"}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsLive((value) => !value)}
-              className="rounded-lg border border-[#bfcac5] bg-white px-4 py-2.5 text-[13px] font-bold text-[#263542] shadow-sm transition hover:border-[#81948b] hover:bg-[#f7faf8]"
-            >
-              {isLive ? "Pause Stream" : "Resume Stream"}
-            </button>
-          </div>
-        </div>
-
-        {/* SITE / TANK CONTEXT */}
-        <section className="mt-6 rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.05)]">
-          <div className="grid gap-5 lg:grid-cols-[1.1fr_1fr_auto] lg:items-end">
-
-            <label className="block">
-              <span className="mb-2 block text-[12px] font-bold uppercase tracking-[0.1em] text-[#43574f]">
-                Monitoring Site
-              </span>
-
-              <select
-                value={selectedSiteId}
-                onChange={handleSiteChange}
-                className="w-full rounded-lg border border-[#bfcac5] bg-white px-3.5 py-3 text-[14px] font-semibold text-[#24313d] outline-none focus:border-[#3f8f6b] focus:ring-2 focus:ring-[#3f8f6b]/15"
-              >
-                {sites.map((site) => (
-                  <option key={site.id} value={site.id}>
-                    {site.name}
-                  </option>
-                ))}
-              </select>
-
-              <p className="mt-2 text-[12px] font-medium text-[#586a63]">
-                {selectedSite.location}
-              </p>
-            </label>
-
-            <label className="block">
-              <span className="mb-2 block text-[12px] font-bold uppercase tracking-[0.1em] text-[#43574f]">
-                Monitored Tank
-              </span>
-
-              <select
-                value={selectedTank.id}
-                onChange={(event) =>
-                  setSelectedTankId(event.target.value)
-                }
-                className="w-full rounded-lg border border-[#bfcac5] bg-white px-3.5 py-3 text-[14px] font-semibold text-[#24313d] outline-none focus:border-[#3f8f6b] focus:ring-2 focus:ring-[#3f8f6b]/15"
-              >
-                {siteTanks.map((tank) => (
-                  <option key={tank.id} value={tank.id}>
-                    {tank.id} — {tank.name}
-                  </option>
-                ))}
-              </select>
-
-              <p className="mt-2 text-[12px] font-medium text-[#586a63]">
-                {siteTanks.length} tank
-                {siteTanks.length === 1 ? "" : "s"} configured for this site
-              </p>
-            </label>
-
-            <div className="rounded-lg border border-[#cbd8d2] bg-[#edf5f1] px-5 py-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#486259]">
-                Telemetry State
-              </p>
-
-              <div className="mt-1 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                <p className="text-[14px] font-bold text-[#29453a]">
-                  {isLive ? "Receiving Data" : "Stream Paused"}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* SITE CONTEXT */}
-        <section className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.04)]">
-            <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-              Active Site
-            </p>
-            <p className="mt-2 text-[18px] font-bold text-[#172033]">
-              {selectedSite.name}
-            </p>
-            <p className="mt-1 text-[13px] font-medium text-[#586771]">
-              {selectedSite.status}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.04)]">
-            <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-              Site Tanks
-            </p>
-            <p className="mt-2 text-[27px] font-bold text-[#172033]">
-              {siteTanks.length}
-            </p>
-            <p className="mt-1 text-[13px] font-medium text-[#586771]">
-              Available for monitoring
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.04)]">
-            <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-              Current Gateway
-            </p>
-            <p className="mt-2 font-mono text-[18px] font-bold text-[#172033]">
-              {selectedTank.gateway}
-            </p>
-            <p className="mt-1 text-[13px] font-medium text-emerald-700">
-              Connected
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.04)]">
-            <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-              Selected Tank
-            </p>
-            <p className="mt-2 text-[18px] font-bold text-[#172033]">
-              {selectedTank.id}
-            </p>
-            <p className="mt-1 text-[13px] font-medium text-[#586771]">
-              {selectedTank.product}
-            </p>
-          </div>
-        </section>
-
-        {/* KPI CARDS */}
-        <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          {[
-            {
-              label: "Tank Level",
-              value: `${formatDecimal(selectedTank.level)}%`,
-              detail: "Current fill level",
-            },
-            {
-              label: "Volume",
-              value: `${formatNumber(currentVolume)} L`,
-              detail: `of ${formatNumber(selectedTank.capacity)} L`,
-            },
-            {
-              label: "Temperature",
-              value: `${formatDecimal(selectedTank.temperature)} °C`,
-              detail: "Product temperature",
-            },
-            {
-              label: "Pressure",
-              value: `${formatDecimal(selectedTank.pressure, 2)} bar`,
-              detail: "Tank pressure",
-            },
-            {
-              label: "Flow Rate",
-              value: `${formatNumber(selectedTank.flow)} L/min`,
-              detail: "Current flow",
-            },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-xl border border-[#cbd8d2] bg-white p-5 shadow-[0_2px_8px_rgba(25,50,40,0.04)]"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-[12px] font-bold uppercase tracking-[0.09em] text-[#43574f]">
-                  {item.label}
-                </p>
-
-                <div className="h-2.5 w-2.5 rounded-full bg-[#3f8f6b]" />
+                <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                  {isLive ? "Simulation Active" : "Monitoring Paused"}
+                </span>
               </div>
 
-              <p className="mt-4 text-[27px] font-bold tracking-[-0.02em] text-[#172033]">
-                {item.value}
-              </p>
+              <button
+                type="button"
+                onClick={() => setIsLive((value) => !value)}
+                className="rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+              >
+                {isLive ? "Pause Stream" : "Resume Stream"}
+              </button>
+            </div>
+          </div>
+        </header>
 
-              <p className="mt-1 text-[13px] font-medium text-[#586771]">
-                {item.detail}
+        {/* ERROR */}
+        {simulationError && (
+          <div
+            role="alert"
+            className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+          >
+            <div className="flex items-start gap-3">
+              <span className="font-bold">Telemetry issue</span>
+              <span>{simulationError}</span>
+            </div>
+          </div>
+        )}
+
+        {/* LOADING */}
+        {isLoading && (
+          <section className={`${cardClass} mt-6`}>
+            <div className="flex items-center gap-3">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
+              <p className={`text-sm font-semibold ${headingText}`}>
+                Loading registered assets and telemetry...
               </p>
             </div>
-          ))}
-        </section>
+          </section>
+        )}
 
-        {/* MAIN MONITORING */}
-        <div className="mt-6 grid gap-6 xl:grid-cols-[1.45fr_0.8fr]">
+        {/* EMPTY INVENTORY */}
+        {!isLoading && tanks.length === 0 && (
+          <section className={`${cardClass} mt-6 px-6 py-14 text-center`}>
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                className="h-8 w-8"
+              >
+                <path d="M4 20h16M6 20V8l6-4 6 4v12M9 11h6M9 15h6" />
+              </svg>
+            </div>
 
-          {/* TANK */}
-          <section className="rounded-xl border border-[#cbd8d2] bg-white p-6 shadow-[0_2px_8px_rgba(25,50,40,0.05)]">
-            <div className="flex flex-col gap-4 border-b border-[#dfe8e3] pb-5 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-[19px] font-bold text-[#172033]">
-                    {selectedTank.name}
-                  </h2>
+            <h2 className={`mt-5 text-xl font-bold ${headingText}`}>
+              No registered tanks available
+            </h2>
 
-                  <span
-                    className={`rounded-full border px-3 py-1 text-[11px] font-bold ${statusClasses(
-                      selectedTank.status,
-                    )}`}
+            <p className={`mx-auto mt-2 max-w-lg text-sm leading-6 ${mutedText}`}>
+              Register a storage tank in Asset Management to start monitoring
+              its simulated telemetry here. This workspace only displays
+              assets registered in your organization.
+            </p>
+
+            <a
+              href="/assets/tanks"
+              className="mt-6 inline-flex items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+            >
+              Open Tank Inventory
+            </a>
+          </section>
+        )}
+
+        {/* MONITORING CONTENT */}
+        {!isLoading && selectedTank && selectedSite && (
+          <>
+            {/* SITE / TANK CONTEXT */}
+            <section className={`${cardClass} mt-6`}>
+              <div className="grid gap-5 lg:grid-cols-3">
+                <label className="block">
+                  <span className={`mb-2 block text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                    Monitoring Site
+                  </span>
+                  <select
+                    value={selectedSite.id}
+                    onChange={(event) => handleSiteChange(event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                   >
-                    {selectedTank.status}
+                    {sites.map((site) => (
+                      <option key={site.id} value={site.id}>
+                        {site.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className={`mt-2 text-xs ${mutedText}`}>
+                    {selectedSite.location}
+                  </p>
+                </label>
+
+                <label className="block">
+                  <span className={`mb-2 block text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                    Monitored Tank
+                  </span>
+                  <select
+                    value={selectedTank.id}
+                    onChange={(event) => setSelectedTankId(event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    {siteTanks.map((tank) => (
+                      <option key={tank.id} value={tank.id}>
+                        {tank.tankCode} — {tank.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className={`mt-2 text-xs ${mutedText}`}>
+                    {siteTanks.length} registered tank
+                    {siteTanks.length === 1 ? "" : "s"} at this site
+                  </p>
+                </label>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                  <p className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                    Telemetry Mode
+                  </p>
+                  <p className="mt-2 text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                    SIMULATED
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-800/80 dark:text-emerald-300/80">
+                    {isLive ? "Automatic refresh every 10 seconds" : "Refresh paused"}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* SITE SUMMARY */}
+            <section className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                {
+                  label: "Active Site",
+                  value: selectedSite.name,
+                  detail: selectedSite.status,
+                },
+                {
+                  label: "Site Tanks",
+                  value: String(siteTanks.length),
+                  detail: "Registered storage assets",
+                },
+                {
+                  label: "Gateway Configuration",
+                  value: selectedTank.gatewayConfigured ? "Assigned" : "Not configured",
+                  detail: "Connectivity not verified",
+                },
+                {
+                  label: "Selected Asset",
+                  value: selectedTank.tankCode,
+                  detail: selectedTank.product,
+                },
+              ].map((item) => (
+                <div key={item.label} className={cardClass}>
+                  <p className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                    {item.label}
+                  </p>
+                  <p className={`mt-3 break-words text-lg font-bold ${headingText}`}>
+                    {item.value}
+                  </p>
+                  <p className={`mt-1 text-sm ${mutedText}`}>
+                    {item.detail}
+                  </p>
+                </div>
+              ))}
+            </section>
+
+            {/* KPI CARDS */}
+            <section className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+              {[
+                {
+                  label: "Tank Level",
+                  value: `${formatNumber(selectedTank.level, 1)}%`,
+                  detail: "Current fill level",
+                },
+                {
+                  label: "Stored Volume",
+                  value: `${formatNumber(currentVolume, 1)} ${selectedTank.capacityUnit}`,
+                  detail: `Of ${formatNumber(selectedTank.capacity)} ${selectedTank.capacityUnit}`,
+                },
+                {
+                  label: "Temperature",
+                  value: `${formatNumber(selectedTank.temperature, 1)} °C`,
+                  detail: "Simulated measurement",
+                },
+                {
+                  label: "Pressure",
+                  value: selectedTank.pressure == null
+                    ? "Not configured"
+                    : `${formatNumber(selectedTank.pressure, 2)} bar`,
+                  detail: "Pressure measurement",
+                },
+                {
+                  label: "Flow Rate",
+                  value: `${formatNumber(selectedTank.flow, 1)} ${selectedTank.flowUnit}`,
+                  detail: "Simulated measurement",
+                },
+              ].map((item) => (
+                <div key={item.label} className={cardClass}>
+                  <p className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                    {item.label}
+                  </p>
+                  <p className={`mt-4 break-words text-xl font-bold ${headingText}`}>
+                    {item.value}
+                  </p>
+                  <p className={`mt-2 text-xs ${mutedText}`}>
+                    {item.detail}
+                  </p>
+                </div>
+              ))}
+            </section>
+
+            {/* MAIN MONITORING */}
+            <div className="mt-6 grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
+              {/* TANK DETAILS */}
+              <section className={cardClass}>
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5 dark:border-slate-800">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className={`text-lg font-bold ${headingText}`}>
+                        {selectedTank.name}
+                      </h2>
+                      <span className={`rounded-full border px-3 py-1 text-xs font-bold ${statusClasses(selectedTank.status)}`}>
+                        {selectedTank.status}
+                      </span>
+                    </div>
+                    <p className={`mt-2 text-sm ${mutedText}`}>
+                      {selectedTank.tankCode} · {selectedSite.name} · {selectedTank.product}
+                    </p>
+                  </div>
+
+                  <div className="text-left sm:text-right">
+                    <p className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                      Last Telemetry
+                    </p>
+                    <p className={`mt-2 text-sm font-semibold ${headingText}`}>
+                      {formatTimestamp(lastUpdated)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center py-8">
+                  <div className="relative h-[310px] w-[210px] rounded-[48%] border-[10px] border-slate-300 bg-slate-100 shadow-inner dark:border-slate-600 dark:bg-slate-800">
+                    <div
+                      className={`absolute bottom-0 left-0 right-0 overflow-hidden rounded-b-[42%] transition-all duration-700 ${
+                        selectedTank.status === "Critical"
+                          ? "bg-red-500"
+                          : selectedTank.status === "Warning"
+                            ? "bg-amber-500"
+                            : "bg-emerald-600"
+                      }`}
+                      style={{
+                        height: `${Math.max(0, Math.min(100, selectedTank.level))}%`,
+                      }}
+                    >
+                      <div className="absolute inset-x-0 top-0 h-5 bg-white/20" />
+                    </div>
+
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="rounded-xl border border-white/20 bg-slate-950/90 px-6 py-5 text-center text-white shadow-lg">
+                        <p className="text-xs font-bold uppercase tracking-wider text-white/70">
+                          Fill Level
+                        </p>
+                        <p className="mt-1 text-4xl font-bold">
+                          {formatNumber(selectedTank.level, 1)}%
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="absolute -right-14 top-2 text-xs font-bold text-slate-500 dark:text-slate-400">100%</div>
+                    <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 dark:text-slate-400">50%</div>
+                    <div className="absolute -right-10 bottom-2 text-xs font-bold text-slate-500 dark:text-slate-400">0%</div>
+                  </div>
+
+                  <div className="mt-8 grid w-full max-w-xl gap-3 sm:grid-cols-3">
+                    {[
+                      {
+                        label: "Capacity",
+                        value: `${formatNumber(selectedTank.capacity)} ${selectedTank.capacityUnit}`,
+                      },
+                      {
+                        label: "Available",
+                        value: `${formatNumber(availableVolume, 1)} ${selectedTank.capacityUnit}`,
+                      },
+                      {
+                        label: "Product",
+                        value: selectedTank.product,
+                      },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl bg-slate-100 p-4 text-center dark:bg-slate-800">
+                        <p className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                          {item.label}
+                        </p>
+                        <p className={`mt-2 break-words text-sm font-bold ${headingText}`}>
+                          {item.value}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* SENSOR TELEMETRY */}
+              <section className={cardClass}>
+                <div className="border-b border-slate-200 pb-5 dark:border-slate-800">
+                  <h2 className={`text-lg font-bold ${headingText}`}>
+                    Sensor Telemetry
+                  </h2>
+                  <p className={`mt-2 text-sm ${mutedText}`}>
+                    Configured measurement points for {selectedTank.tankCode}
+                  </p>
+                </div>
+
+                <div className="mt-5 space-y-3">
+                  {selectedTank.sensors.map((sensor) => (
+                    <div
+                      key={sensor.id}
+                      className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className={`text-sm font-bold ${headingText}`}>
+                            {sensor.type}
+                          </p>
+                          <p className={`mt-1 font-mono text-xs ${mutedText}`}>
+                            {sensor.id}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-300">
+                          Simulated
+                        </span>
+                      </div>
+                      <p className={`mt-4 text-xl font-bold ${headingText}`}>
+                        {sensorValue(sensor, selectedTank)}
+                      </p>
+                    </div>
+                  ))}
+
+                  {selectedTank.pressure == null && (
+                    <div className="rounded-xl border border-dashed border-slate-300 p-4 dark:border-slate-700">
+                      <p className={`text-sm font-semibold ${headingText}`}>
+                        Pressure sensor
+                      </p>
+                      <p className={`mt-1 text-xs ${mutedText}`}>
+                        No pressure measurement is currently configured.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* CONNECTIVITY + EVENTS */}
+            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              <section className={cardClass}>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-5 dark:border-slate-800">
+                  <div>
+                    <h2 className={`text-lg font-bold ${headingText}`}>
+                      Gateway Connectivity
+                    </h2>
+                    <p className={`mt-2 text-sm ${mutedText}`}>
+                      Gateway assignment and communication status
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+                    UNVERIFIED
                   </span>
                 </div>
 
-                <p className="mt-2 text-[13px] font-medium text-[#53636e]">
-                  {selectedTank.id} · {selectedSite.name} ·{" "}
-                  {selectedTank.product}
-                </p>
-              </div>
-
-              <div className="text-left sm:text-right">
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#52665d]">
-                  Last Telemetry
-                </p>
-
-                <p className="mt-1 text-[13px] font-bold text-[#263542]">
-                  Just now
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-8 flex flex-col items-center justify-center">
-              <div className="relative h-[310px] w-[210px]">
-                <div className="absolute inset-0 rounded-[48%] border-[10px] border-[#b9c7c1] bg-[#f4f8f6] shadow-inner" />
-
-                <div
-                  className="absolute bottom-[10px] left-[10px] right-[10px] overflow-hidden rounded-b-[42%] bg-[#3f8f6b] transition-all duration-700"
-                  style={{
-                    height: `calc(${Math.min(
-                      100,
-                      Math.max(0, selectedTank.level),
-                    )}% - 10px)`,
-                  }}
-                >
-                  <div className="absolute inset-x-0 top-0 h-5 bg-[#62ae88] opacity-80" />
-                  <div className="absolute inset-x-0 top-4 h-px bg-white/30" />
-                </div>
-
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="rounded-xl border border-white/70 bg-[#172923]/95 px-6 py-5 text-center text-white shadow-lg">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/80">
-                      Fill Level
-                    </p>
-
-                    <p className="mt-1 text-[34px] font-bold">
-                      {formatDecimal(selectedTank.level)}%
-                    </p>
-                  </div>
-                </div>
-
-                <div className="absolute -right-16 top-4 text-[12px] font-bold text-[#52636d]">
-                  100%
-                </div>
-
-                <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-[12px] font-bold text-[#52636d]">
-                  50%
-                </div>
-
-                <div className="absolute -right-12 bottom-4 text-[12px] font-bold text-[#52636d]">
-                  0%
-                </div>
-              </div>
-
-              <div className="mt-7 grid w-full max-w-xl grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="rounded-lg bg-[#edf4f0] p-4 text-center">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                    Capacity
-                  </p>
-
-                  <p className="mt-1 text-[15px] font-bold text-[#172033]">
-                    {formatNumber(selectedTank.capacity)} L
-                  </p>
-                </div>
-
-                <div className="rounded-lg bg-[#edf4f0] p-4 text-center">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                    Available
-                  </p>
-
-                  <p className="mt-1 text-[15px] font-bold text-[#172033]">
-                    {formatNumber(
-                      selectedTank.capacity - currentVolume,
-                    )}{" "}
-                    L
-                  </p>
-                </div>
-
-                <div className="rounded-lg bg-[#edf4f0] p-4 text-center">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                    Product
-                  </p>
-
-                  <p className="mt-1 text-[15px] font-bold text-[#172033]">
-                    {selectedTank.product}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* SENSOR TELEMETRY */}
-          <section className="rounded-xl border border-[#cbd8d2] bg-white p-6 shadow-[0_2px_8px_rgba(25,50,40,0.05)]">
-            <div className="border-b border-[#dfe8e3] pb-5">
-              <h2 className="text-[19px] font-bold text-[#172033]">
-                Sensor Telemetry
-              </h2>
-
-              <p className="mt-2 text-[13px] font-medium text-[#53636e]">
-                Measurement points assigned to {selectedTank.id}
-              </p>
-            </div>
-
-            <div className="mt-5 space-y-3">
-              {selectedTank.sensors.map((sensor) => (
-                <div
-                  key={sensor.id}
-                  className="rounded-lg border border-[#dce5e0] p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[13px] font-bold text-[#2d3b47]">
-                        {sensor.type}
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {[
+                    {
+                      label: "Gateway",
+                      value: selectedTank.gateway,
+                    },
+                    {
+                      label: "Signal",
+                      value: "Not available",
+                    },
+                    {
+                      label: "Interface",
+                      value: "Not verified",
+                    },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
+                      <p className={`text-xs font-bold uppercase tracking-wider ${mutedText}`}>
+                        {item.label}
                       </p>
-
-                      <p className="mt-1 font-mono text-[11px] font-semibold text-[#5b6b75]">
-                        {sensor.id}
+                      <p className={`mt-3 break-words text-sm font-bold ${headingText}`}>
+                        {item.value}
                       </p>
                     </div>
+                  ))}
+                </div>
+                <p className={`mt-4 text-xs leading-5 ${mutedText}`}>
+                  A configured gateway does not confirm physical connectivity.
+                  Live connection status will be shown after gateway heartbeat
+                  integration is implemented.
+                </p>
+              </section>
 
-                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
-                      <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                      Healthy
-                    </span>
-                  </div>
-
-                  <p className="mt-3 text-[20px] font-bold text-[#172033]">
-                    {sensorValue(sensor.type, selectedTank)}
+              <section className={cardClass}>
+                <div className="border-b border-slate-200 pb-5 dark:border-slate-800">
+                  <h2 className={`text-lg font-bold ${headingText}`}>
+                    Recent Activity
+                  </h2>
+                  <p className={`mt-2 text-sm ${mutedText}`}>
+                    Latest available simulator update
                   </p>
                 </div>
-              ))}
-            </div>
-          </section>
-        </div>
 
-        {/* CONNECTIVITY + EVENTS */}
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-
-          <section className="rounded-xl border border-[#cbd8d2] bg-white p-6 shadow-[0_2px_8px_rgba(25,50,40,0.05)]">
-            <div className="flex items-center justify-between border-b border-[#dfe8e3] pb-5">
-              <div>
-                <h2 className="text-[19px] font-bold text-[#172033]">
-                  Gateway Connectivity
-                </h2>
-
-                <p className="mt-2 text-[13px] font-medium text-[#53636e]">
-                  Communication path for field telemetry
-                </p>
-              </div>
-
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-800">
-                ONLINE
-              </span>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg bg-[#edf4f0] p-4">
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                  Gateway
-                </p>
-
-                <p className="mt-2 font-mono text-[13px] font-bold text-[#172033]">
-                  {selectedTank.gateway}
-                </p>
-              </div>
-
-              <div className="rounded-lg bg-[#edf4f0] p-4">
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                  Signal
-                </p>
-
-                <p className="mt-2 text-[14px] font-bold text-[#172033]">
-                  -61 dBm
-                </p>
-              </div>
-
-              <div className="rounded-lg bg-[#edf4f0] p-4">
-                <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#50645b]">
-                  Interface
-                </p>
-
-                <p className="mt-2 text-[14px] font-bold text-[#172033]">
-                  MQTT Ready
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-[#cbd8d2] bg-white p-6 shadow-[0_2px_8px_rgba(25,50,40,0.05)]">
-            <div className="border-b border-[#dfe8e3] pb-5">
-              <h2 className="text-[19px] font-bold text-[#172033]">
-                Recent Events
-              </h2>
-
-              <p className="mt-2 text-[13px] font-medium text-[#53636e]">
-                Latest platform and telemetry activity
-              </p>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              {[
-                {
-                  time: "Just now",
-                  text: `${selectedTank.id} telemetry received`,
-                  type: "Telemetry",
-                },
-                {
-                  time: "2 min ago",
-                  text: `${selectedTank.gateway} heartbeat received`,
-                  type: "Gateway",
-                },
-                {
-                  time: "8 min ago",
-                  text: "Sensor health check completed",
-                  type: "System",
-                },
-              ].map((event) => (
-                <div
-                  key={`${event.time}-${event.text}`}
-                  className="flex items-start gap-3"
-                >
-                  <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-[#3f8f6b]" />
-
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-semibold text-[#35434e]">
-                      {event.text}
+                <div className="mt-5 flex items-start gap-3">
+                  <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-cyan-500" />
+                  <div>
+                    <p className={`text-sm font-semibold ${headingText}`}>
+                      Simulated telemetry update recorded
                     </p>
-
-                    <p className="mt-1 text-[11px] font-medium text-[#5b6b75]">
-                      {event.type} · {event.time}
+                    <p className={`mt-2 text-xs ${mutedText}`}>
+                      {selectedTank.tankCode} · {formatTimestamp(lastUpdated)}
                     </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          </section>
-        </div>
 
-        {/* ARCHITECTURE */}
-        <section className="mt-6 rounded-xl border border-[#bfd3c9] bg-[#e4f0eb] p-5 shadow-[0_2px_8px_rgba(25,50,40,0.03)]">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#315f4b]">
+                <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-4 dark:border-slate-700">
+                  <p className={`text-xs leading-5 ${mutedText}`}>
+                    Gateway heartbeats, physical sensor health checks and
+                    operational event history are not yet connected to this
+                    workspace.
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            {/* ARCHITECTURE */}
+            <section className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/50 dark:bg-emerald-950/25">
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
                 Hardware-Ready Monitoring Layer
               </p>
-
-              <p className="mt-2 max-w-4xl text-[13px] font-medium leading-6 text-[#40584e]">
-                The monitoring interface is organized around Site → Tank →
-                Sensor → Gateway → Telemetry. The current stream is simulated
-                so the platform can be developed and tested before physical
-                equipment is connected. Future integration adapters will feed
-                the same telemetry model from supported industrial interfaces.
+              <p className="mt-3 max-w-5xl text-sm leading-6 text-slate-700 dark:text-slate-300">
+                The monitoring architecture follows Site → Tank → Sensor →
+                Gateway → Telemetry. The current stream is simulated for
+                software development and testing before physical equipment
+                is connected. Future integration adapters can feed the same
+                telemetry model from supported industrial interfaces.
               </p>
-            </div>
+              <div className="mt-4 inline-flex rounded-lg border border-emerald-200 bg-white px-4 py-3 font-mono text-xs font-bold text-emerald-800 dark:border-emerald-800 dark:bg-slate-900 dark:text-emerald-300">
+                SENSOR → GATEWAY → TELEMETRY
+              </div>
+            </section>
 
-            <div className="shrink-0 rounded-lg border border-[#b8cec3] bg-white px-5 py-3 font-mono text-[11px] font-bold text-[#315f4b]">
-              SENSOR → GATEWAY → TELEMETRY
+            {/* DIGITAL TWIN */}
+            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+              <IndustrialTankVisualization
+                tanks={siteTanks}
+                selectedTankId={selectedTank.id}
+                onSelect={setSelectedTankId}
+              />
             </div>
-          </div>
-        </section>
+          </>
+        )}
       </div>
     </main>
   );

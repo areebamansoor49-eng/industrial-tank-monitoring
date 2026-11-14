@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.18"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       alerts: {
@@ -137,6 +162,91 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      deliveries: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          delivered_volume: number | null
+          dispatched_at: string | null
+          id: string
+          metadata: Json
+          notes: string | null
+          organization_id: string
+          planned_volume: number | null
+          product: string | null
+          reference_number: string
+          scheduled_at: string | null
+          site_id: string | null
+          status: Database["public"]["Enums"]["delivery_status"]
+          supplier: string | null
+          tank_id: string | null
+          updated_at: string
+          volume_unit: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          delivered_volume?: number | null
+          dispatched_at?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          organization_id: string
+          planned_volume?: number | null
+          product?: string | null
+          reference_number: string
+          scheduled_at?: string | null
+          site_id?: string | null
+          status?: Database["public"]["Enums"]["delivery_status"]
+          supplier?: string | null
+          tank_id?: string | null
+          updated_at?: string
+          volume_unit?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          delivered_volume?: number | null
+          dispatched_at?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          organization_id?: string
+          planned_volume?: number | null
+          product?: string | null
+          reference_number?: string
+          scheduled_at?: string | null
+          site_id?: string | null
+          status?: Database["public"]["Enums"]["delivery_status"]
+          supplier?: string | null
+          tank_id?: string | null
+          updated_at?: string
+          volume_unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deliveries_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deliveries_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deliveries_tank_id_fkey"
+            columns: ["tank_id"]
+            isOneToOne: false
+            referencedRelation: "tanks"
             referencedColumns: ["id"]
           },
         ]
@@ -808,19 +918,156 @@ export type Database = {
           },
         ]
       }
+      telemetry_latest: {
+        Row: {
+          device_id: string | null
+          gateway_id: string | null
+          id: string
+          metadata: Json
+          metric: string
+          organization_id: string
+          quality: string
+          received_at: string
+          recorded_at: string
+          sensor_id: string | null
+          site_id: string | null
+          tank_id: string | null
+          unit: string | null
+          updated_at: string
+          value: number
+        }
+        Insert: {
+          device_id?: string | null
+          gateway_id?: string | null
+          id?: string
+          metadata?: Json
+          metric: string
+          organization_id: string
+          quality?: string
+          received_at?: string
+          recorded_at: string
+          sensor_id?: string | null
+          site_id?: string | null
+          tank_id?: string | null
+          unit?: string | null
+          updated_at?: string
+          value: number
+        }
+        Update: {
+          device_id?: string | null
+          gateway_id?: string | null
+          id?: string
+          metadata?: Json
+          metric?: string
+          organization_id?: string
+          quality?: string
+          received_at?: string
+          recorded_at?: string
+          sensor_id?: string | null
+          site_id?: string | null
+          tank_id?: string | null
+          unit?: string | null
+          updated_at?: string
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telemetry_latest_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telemetry_latest_gateway_id_fkey"
+            columns: ["gateway_id"]
+            isOneToOne: false
+            referencedRelation: "gateways"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telemetry_latest_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telemetry_latest_sensor_id_fkey"
+            columns: ["sensor_id"]
+            isOneToOne: false
+            referencedRelation: "sensors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telemetry_latest_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telemetry_latest_tank_id_fkey"
+            columns: ["tank_id"]
+            isOneToOne: false
+            referencedRelation: "tanks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      create_organization_for_current_user: {
+        Args: {
+          organization_country?: string
+          organization_industry?: string
+          organization_name: string
+          organization_slug: string
+          organization_timezone?: string
+        }
+        Returns: {
+          country: string | null
+          created_at: string
+          id: string
+          industry: string | null
+          name: string
+          slug: string
+          status: Database["public"]["Enums"]["organization_status"]
+          timezone: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       is_organization_member: {
         Args: { target_organization_id: string }
         Returns: boolean
+      }
+      record_simulated_tank_telemetry: {
+        Args: {
+          p_flow_rate: number
+          p_level: number
+          p_organization_id: string
+          p_site_id: string
+          p_tank_id: string
+          p_temperature: number
+          p_totalized_volume: number
+          p_volume_unit?: string
+        }
+        Returns: Json
       }
     }
     Enums: {
       alert_severity: "info" | "warning" | "critical"
       alert_status: "open" | "acknowledged" | "resolved"
+      delivery_status: "scheduled" | "in_transit" | "completed" | "cancelled"
       device_status: "online" | "offline" | "warning" | "maintenance"
       incident_status: "open" | "investigating" | "resolved" | "closed"
       integration_status:
@@ -960,10 +1207,14 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       alert_severity: ["info", "warning", "critical"],
       alert_status: ["open", "acknowledged", "resolved"],
+      delivery_status: ["scheduled", "in_transit", "completed", "cancelled"],
       device_status: ["online", "offline", "warning", "maintenance"],
       incident_status: ["open", "investigating", "resolved", "closed"],
       integration_status: [
